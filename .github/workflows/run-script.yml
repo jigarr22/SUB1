@@ -1,0 +1,32 @@
+name: Run script and update subs1
+
+on:
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the subs1 file back
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run script.py
+        run: python script.py
+
+      - name: Commit and push subs1
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add subs1
+          git commit -m "Update subs1 [skip ci]" || echo "No changes"
+          git push
