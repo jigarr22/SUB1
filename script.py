@@ -69,13 +69,13 @@ def transform_vless(str1, output_file="subs1"):
         ech_value = quote("ip.js+udp://8.8.8.8", safe="+")  # -> ip.js+udp%3A%2F%2F8.8.8.8
 
         # --- 2) Replace host with 188.114.97.6 ---
-        new_host = "spiceworks.com"
+        new_host = "188.114.97.6"
 
         # --- 3) & 4) Add mux=true and concurrency=8 ---
         query_pairs = parse_qsl(parts.query, keep_blank_values=True)
         query_dict = dict(query_pairs)
 
-        query_dict["ech"] = "ip.js+udp://8.8.8.8"      # will be encoded below
+        query_dict["ech"] = "ip.gs+udp://8.8.8.8"      # will be encoded below
         query_dict["mux"] = "true"
         query_dict["concurrency"] = "8"
 
