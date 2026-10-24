@@ -1,117 +1,135 @@
-import urllib.request
 import base64
-from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
-import re
+import random
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+OUTPUT_FILE = "subs1"
+MAX_CONFIGS = 100          # how many configs end up in the output file
+TIMEOUT = 20               # seconds per source
+
+NEW_HOST = "161.145.150.1"
+ECH_VALUE = "ip.gs+udp://8.8.8.8"
+
+# 20 free public subscription sources (plain text or Base64).
+# Dead or changed sources are skipped automatically.
+SOURCES = [
+    "https://github.com/mohamadfg-dev/telegram-v2ray-configs-collector/raw/refs/heads/main/category/vless.txt",
+    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/protocols/vless.txt",
+    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/top100.txt",
+    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/verified/configs.txt",
+    "https://raw.githubusercontent.com/0xRadikal/Free-v2ray-Configs/main/fast/configs.txt",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/vless_configs.txt",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/all_extracted_configs.txt",
+    "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/V2Ray-Config-By-EbraSha-All-Type.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Splitted-By-Protocol/vless.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub1.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub2.txt",
+    "https://raw.githubusercontent.com/barry-far/V2ray-config/main/Sub3.txt",
+    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/vless.txt",
+    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/refs/heads/main/subscriptions/v2ray/super-sub.txt",
+    "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/refs/heads/main/subscriptions/v2ray/all_sub.txt",
+    "https://github.com/Epodonios/v2ray-configs/raw/main/All_Configs_Sub.txt",
+    "https://github.com/Delta-Kronecker/V2ray-Config/raw/refs/heads/main/config/all_configs.txt",
+    "https://raw.githubusercontent.com/Firmfox/Proxify/refs/heads/main/v2ray_configs/mixed/subscription-1.txt",
+    "https://raw.githubusercontent.com/Firmfox/Proxify/refs/heads/main/v2ray_configs/mixed/subscription-2.txt",
+    "https://github.com/Au1rxx/free-vpn-subscriptions/raw/main/output/v2ray-base64.txt",
+]
 
 
-# URL to download from
-# url = "https://jigaarr24.pythonanywhere.com/xprr?File=31"
-url = "https://github.com/mohamadfg-dev/telegram-v2ray-configs-collector/raw/refs/heads/main/category/vless.txt"
-
-# Download the content
-print("Downloading...")
-with urllib.request.urlopen(url) as response:
-    content = response.read().decode('utf-8').strip()
-
-print(content)
-# The content is Base64 encoded, so decode it
-# print("Decoding Base64...")
-# decoded_bytes = base64.b64decode(content)
-# decoded_text = decoded_bytes.decode('utf-8')
-
-# Save to subs1 file
-print("Saving to subs1...")
-with open("subs1", "w", encoding="utf-8") as f:
-    # f.write(decoded_text)
-    f.write(content)
+def maybe_b64_decode(text):
+    """Return decoded text if it is a Base64 subscription, else the text unchanged."""
+    text = text.strip()
+    if "://" in text:
+        return text
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        return base64.b64decode(padded).decode("utf-8", errors="ignore")
+    except Exception:
+        return text
 
 
+def fetch(url):
+    """Download one source and return its vless:// lines ([] on any failure)."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+            raw = response.read().decode("utf-8", errors="ignore")
+        lines = [l.strip() for l in maybe_b64_decode(raw).splitlines()]
+        found = [l for l in lines if l.startswith("vless://")]
+        print(f"OK    {len(found):5d} vless  {url}")
+        return found
+    except Exception as e:
+        print(f"SKIP  {url}  ({e})")
+        return []
 
-def transform_vless(str1, output_file="subs1"):
+
+def transform_vless(line):
     """
-    For every vless:// URL containing '&type=ws':
-      1. Add 'ech=ip.js+udp://8.8.8.8' (URL-encoded value).
-      2. Replace the address between '@' and ':' with 188.114.97.6.
-      3. Add mux=true (MUX on).
-      4. Set concurrency=8.
+    Keep only WebSocket vless links and rewrite them:
+      - address -> NEW_HOST
+      - add ech, mux=true, concurrency=8
+    Returns the new link, or None if the link should be dropped.
     """
-
-    # with open(input_file, "r", encoding="utf-8") as f:
-    #     lines = f.readlines()
-    lines = str1.split('\n')
-    # print(lines)
-    
-    out_lines = []
-    changed = 0
-
-    for line in lines:
-        line = line.rstrip("\n")
-
-        # Only process vless links that contain &type=ws
-        if not line.startswith("vless://") or "&type=ws" not in line:
-            
-            # out_lines.append(line)
-            continue
-        # print('Found.')
-        # --- Split the URL into its parts ---
-        # vless://user@host:port?query#fragment
+    try:
         parts = urlsplit(line)
-        # parts.username = user
-        # parts.hostname = current host
-        # parts.port     = port
-        # parts.query    = query string
-        # parts.fragment = tag (after #)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        if query.get("type") != "ws" or not parts.username:
+            return None
 
-        # --- 1) Add ech param ---
-        # 'ech=ip.js+udp://8.8.8.8'  --> we URL-encode the value only
-        ech_value = quote("ip.js+udp://8.8.8.8", safe="")  # -> ip.js%2Budp%3A%2F%2F8.8.8.8
-        # Actually we want '+' preserved as literal plus in the host part:
-        ech_value = quote("ip.js+udp://8.8.8.8", safe="+")  # -> ip.js+udp%3A%2F%2F8.8.8.8
+        query["ech"] = ECH_VALUE
+        query["mux"] = "true"
+        query["concurrency"] = "8"
 
-        # --- 2) Replace host with 188.114.97.6 ---
-        new_host = "188.114.97.6"
-
-        # --- 3) & 4) Add mux=true and concurrency=8 ---
-        query_pairs = parse_qsl(parts.query, keep_blank_values=True)
-        query_dict = dict(query_pairs)
-
-        query_dict["ech"] = "ip.gs+udp://8.8.8.8"      # will be encoded below
-        query_dict["mux"] = "true"
-        query_dict["concurrency"] = "8"
-
-        # Rebuild query (urlencode handles encoding, keeps '+' by default in query)
-        new_query = urlencode(query_dict, safe="+/:")
-
-        # Rebuild netloc with new host (keep userinfo and port)
-        userinfo = parts.username or ""
+        userinfo = parts.username
         if parts.password:
             userinfo += f":{parts.password}"
-        new_netloc = f"{userinfo}@{new_host}"
+        netloc = f"{userinfo}@{NEW_HOST}"
         if parts.port:
-            new_netloc += f":{parts.port}"
+            netloc += f":{parts.port}"
 
-        new_url = urlunsplit((
+        return urlunsplit((
             parts.scheme,
-            new_netloc,
+            netloc,
             parts.path,
-            new_query,
+            urlencode(query, safe="+/:"),
             parts.fragment,
         ))
-
-        out_lines.append(new_url)
-        changed += 1
-
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(out_lines) + "\n")
-    print(changed)
-
-    print(f"Processed {changed} vless links with type=ws")
-    print(f"Saved to {output_file}")
+    except Exception:
+        return None
 
 
-transform_vless(content)
+def build(all_lines, max_configs=MAX_CONFIGS):
+    """Transform, de-duplicate, then pick up to max_configs at random."""
+    unique = {}
+    for line in all_lines:
+        new = transform_vless(line)
+        if new:
+            unique.setdefault(new.split("#")[0], new)   # de-dupe ignoring the tag
+    pool = list(unique.values())
+    chosen = random.sample(pool, min(max_configs, len(pool)))
+    return pool, chosen
 
 
+def main():
+    print(f"Downloading {len(SOURCES)} sources...")
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        results = list(pool.map(fetch, SOURCES))
+    all_lines = [l for r in results for l in r]
+    print(f"Total vless links downloaded: {len(all_lines)}")
 
-print("Done! Content saved to 'subs1'")
-# print(f"Total lines: {len(content.splitlines())}")
+    pool, chosen = build(all_lines)
+    print(f"Unique ws links after transform: {len(pool)}")
+
+    if not chosen:
+        # Keep the old subs1 instead of overwriting it with an empty file.
+        print("No configs found. Leaving existing subs1 untouched.")
+        return
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(chosen) + "\n")
+    print(f"Done! Saved {len(chosen)} random configs to '{OUTPUT_FILE}'")
+
+
+if __name__ == "__main__":
+    main()
