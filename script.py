@@ -8,7 +8,7 @@ OUTPUT_FILE = "subs1"
 MAX_CONFIGS = 100          # how many configs end up in the output file
 TIMEOUT = 20               # seconds per source
 
-NEW_HOST = "161.145.150.1"
+NEW_HOST = "195.85.59.10"
 ECH_VALUE = "ip.gs+udp://8.8.8.8"
 
 # 20 free public subscription sources (plain text or Base64).
